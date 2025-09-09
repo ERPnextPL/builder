@@ -1,5 +1,5 @@
 <template>
-	<Dropdown
+<Dropdown
 		:options="[
 			{
 				group: 'Builder',
@@ -17,6 +17,7 @@
 						onClick: () => $router.push({ name: 'builder', params: { pageId: 'new' } }),
 						icon: 'plus',
 					},
+
 					{
 						label: 'Copy Page',
 						onClick: handleCopyPage,
@@ -74,6 +75,7 @@
 			</div>
 		</template>
 	</Dropdown>
+  
 </template>
 <script setup lang="ts">
 import useCanvasStore from "@/stores/canvasStore";
@@ -83,6 +85,7 @@ import { triggerCopyEvent } from "@/utils/helpers";
 
 import { useDark, useToggle } from "@vueuse/core";
 import { Dropdown } from "frappe-ui";
+import { ref } from "vue";
 
 const pageStore = usePageStore();
 const isDark = useDark({
@@ -97,4 +100,6 @@ const handleCopyPage = () => {
 	canvasStore.requiresConfirmationForCopyingEntirePage = false;
 	triggerCopyEvent();
 };
+
+// no editor menu export/import — kept only on dashboard
 </script>

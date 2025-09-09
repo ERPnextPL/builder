@@ -18,6 +18,7 @@ from werkzeug.wrappers import Response
 
 from builder import builder_analytics
 from builder.builder.doctype.builder_page.builder_page import BuilderPageRenderer
+from builder.site_archive import export_site as _export_site, import_site as _import_site
 
 
 @frappe.whitelist()
@@ -297,3 +298,83 @@ def get_overall_analytics(
 		to_date=to_date,
 		route_filter_type=route_filter_type,
 	)
+
+
+# ---------- Site Export/Import ----------
+
+
+@frappe.whitelist(methods=["POST"])
+def export_site(pages=None, include_drafts=False, with_assets=True):
+    """Export pages and assets into a .zip and return a private URL.
+
+    Args:
+        pages: JSON list of page names or routes (optional)
+        include_drafts: include draft blocks in export and asset scan
+        with_assets: include assets referenced by pages
+    """
+    # normalize pages argument (can be JSON string, CSV string, list, or None)
+    pages_list = None
+    if isinstance(pages, list):
+        pages_list = pages
+    elif isinstance(pages, str):
+        s = pages.strip()
+        if s.startswith("["):
+            pages_list = frappe.parse_json(s)
+        elif s:
+            # comma-separated or single value
+            pages_list = [v.strip() for v in s.split(",") if v.strip()]
+    # coerce flags to bool
+    include_drafts = bool(int(include_drafts)) if isinstance(include_drafts, (str, int)) else bool(include_drafts)
+    with_assets = bool(int(with_assets)) if isinstance(with_assets, (str, int)) else bool(with_assets)
+    return _export_site(pages=pages_list, include_drafts=include_drafts, with_assets=with_assets)
+
+
+@frappe.whitelist(methods=["POST"])
+def import_site(archive, mode: str = "upsert", run_async: int | bool = 0):
+    """Import a previously exported site archive.
+
+    Args:
+        archive: File URL or File docname
+        mode: upsert | create_only | overwrite
+        run_async: if truthy, enqueue a background job and return immediately
+    """
+    # For large imports, allow async execution to avoid request timeouts
+    if frappe.utils.cint(run_async):
+        job = frappe.enqueue(
+            "builder.api.run_import_site_job",
+            archive=archive,
+            mode=mode,
+            queue="long",
+            job_name=f"Builder Site Import ({frappe.session.user})",
+        )
+        return {"job_id": job.id}
+    return _import_site(archive=archive, mode=mode)
+
+
+def run_import_site_job(archive, mode: str = "upsert"):
+    """Background job wrapper for site import.
+
+    Returns the same payload as synchronous import.
+    """
+    return _import_site(archive=archive, mode=mode)
+
+
+@frappe.whitelist()
+def get_import_job_status(job_id: str | None = None):
+    """Return status for a background import job.
+
+    Response: { status: 'queued'|'started'|'finished'|'failed'|'stopped'|'unknown' }
+    """
+    if not job_id:
+        return {"status": "unknown"}
+    status = frappe.db.get_value("RQ Job", job_id, "status")
+    if status:
+        return {"status": status}
+    try:  # pragma: no cover
+        from rq.job import Job
+        from frappe.utils.background_jobs import get_redis_conn
+
+        job = Job.fetch(job_id, connection=get_redis_conn())
+        return {"status": (job.get_status() or "unknown")}
+    except Exception:
+        return {"status": "unknown"}

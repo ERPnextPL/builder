@@ -19,8 +19,87 @@
 						class="bg-surface-gray-7 !text-ink-white hover:bg-surface-gray-6">
 						New
 					</BuilderButton>
-				</router-link>
-			</div>
+        </router-link>
+        <BuilderButton
+            variant="subtle"
+            iconLeft="download"
+            class="ml-2"
+            @click="openExportDialog">
+            Export
+        </BuilderButton>
+        <BuilderButton
+            variant="subtle"
+            iconLeft="upload"
+            class="ml-1"
+            @click="showImportDialog = true">
+            Import
+        </BuilderButton>
+    </div>
+    <!-- Export/Import Dialogs -->
+    <Dialog v-model="showExportDialog" :options="{ title: 'Export Pages', size: 'xl' }" style="z-index: 60">
+      <template #body-content>
+        <div class="flex gap-6 py-2">
+          <div class="w-2/3">
+            <div class="mb-2 flex items-center justify-between">
+              <div class="text-sm text-ink-gray-7">Select pages to export</div>
+              <div class="flex gap-2 text-xs">
+                <button class="rounded border px-2 py-1" @click="() => { for (const p of (webPages.data||[])) dialogSelected[p.name] = true; }">Select all</button>
+                <button class="rounded border px-2 py-1" @click="() => { dialogSelected.value = {}; }">Clear</button>
+              </div>
+            </div>
+            <div class="max-h-[50vh] overflow-auto rounded border">
+              <div v-if="!webPages.data || !webPages.data.length" class="p-3 text-sm text-ink-gray-6">Loading pages…</div>
+              <div v-else>
+                <div v-for="p in webPages.data" :key="p.name" class="flex items-center gap-3 border-b p-2 text-sm">
+                  <input type="checkbox" v-model="dialogSelected[p.name]" />
+                  <div class="flex flex-col">
+                    <span class="font-medium">{{ p.page_title || p.name }}</span>
+                    <span class="text-xs text-ink-gray-5">{{ p.route }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="w-1/3">
+            <div class="mb-3 text-sm text-ink-gray-7">Options</div>
+            <label class="flex items-center gap-2 text-sm">
+              <input type="checkbox" v-model="includeDrafts" /> Include drafts
+            </label>
+            <label class="mt-2 flex items-center gap-2 text-sm">
+              <input type="checkbox" v-model="withAssets" /> Include assets
+            </label>
+            <div class="mt-4 flex justify-end gap-2">
+              <button class="rounded border px-3 py-1 text-sm" @click="showExportDialog = false">Cancel</button>
+              <button class="rounded bg-blue-600 px-3 py-1 text-sm text-white" :disabled="exporting" @click="doExport">Export</button>
+            </div>
+          </div>
+        </div>
+      </template>
+    </Dialog>
+    <Dialog v-model="showImportDialog" :options="{ title: 'Import Site Archive', size: 'md' }" style="z-index: 60">
+      <template #body-content>
+        <div class="flex flex-col gap-4 py-2">
+          <div class="flex items-center gap-3">
+            <label class="w-24 text-right text-sm">Mode</label>
+            <select v-model="importMode" class="w-48 rounded border border-outline-gray-2 p-1 text-sm">
+              <option value="upsert">upsert</option>
+              <option value="create_only">create_only</option>
+              <option value="overwrite">overwrite</option>
+            </select>
+          </div>
+          <div class="flex items-center gap-3">
+            <label class="w-24 text-right text-sm">Archive</label>
+            <input type="file" accept=".zip" @change="(e:any)=> (importFile = e.target.files?.[0] || null)" class="text-sm" />
+          </div>
+          <div class="flex justify-end gap-2 pt-2">
+            <button class="rounded border px-3 py-1 text-sm" @click="showImportDialog = false">Cancel</button>
+            <button class="rounded bg-blue-600 px-3 py-1 text-sm text-white disabled:opacity-50" :disabled="importing || !importFile" @click="doImport">
+              {{ importing ? 'Importing…' : 'Import' }}
+            </button>
+          </div>
+        </div>
+      </template>
+    </Dialog>
 			<!-- Sidebar -->
 			<!-- Main Content -->
 			<div class="flex-1 overflow-auto">
@@ -169,6 +248,8 @@ import { posthog } from "@/telemetry";
 import { BuilderPage } from "@/types/Builder/BuilderPage";
 import { useDark, useEventListener, useStorage, useToggle, watchDebounced } from "@vueuse/core";
 import { createResource } from "frappe-ui";
+import { toast } from "vue-sonner";
+import Dialog from "@/components/Controls/Dialog.vue";
 import { onActivated, Ref, ref, watch } from "vue";
 
 const isDark = useDark({
@@ -194,6 +275,24 @@ const orderMap = {
 
 const selectedPages = ref(new Set<string>());
 const selectionMode = ref(false);
+const showExportDialog = ref(false);
+const includeDrafts = ref(true);
+const withAssets = ref(true);
+const exporting = ref(false);
+const showImportDialog = ref(false);
+const importMode = ref<'upsert' | 'create_only' | 'overwrite'>('upsert');
+const importFile = ref<File | null>(null);
+const importing = ref(false);
+const dialogSelected = ref<Record<string, boolean>>({});
+
+const openExportDialog = async () => {
+    dialogSelected.value = {};
+    for (const name of selectedPages.value) dialogSelected.value[name] = true;
+    if (!webPages.data || !webPages.data.length) {
+        await webPages.fetch();
+    }
+    showExportDialog.value = true;
+};
 
 onActivated(() => {
 	posthog.capture("builder_dashboard_page_visited");
@@ -330,4 +429,103 @@ const setFolder = async (folder: string) => {
 };
 
 const showSettingsDialog = ref(false);
+
+// Export selected pages
+const doExport = async () => {
+    const fromDialog = Object.keys(dialogSelected.value).filter((k) => dialogSelected.value[k]);
+    const pages = fromDialog.length ? fromDialog : Array.from(selectedPages.value);
+    if (!pages.length) return;
+    exporting.value = true;
+    try {
+        const res = await createResource({ method: 'POST', url: 'builder.api.export_site' }).submit({
+            pages,
+            include_drafts: includeDrafts.value ? 1 : 0,
+            with_assets: withAssets.value ? 1 : 0,
+        });
+        const url = (res as any)?.url;
+        if (url) {
+            window.open(url, '_blank');
+        }
+        showExportDialog.value = false;
+    } finally {
+        exporting.value = false;
+    }
+};
+
+// Import archive
+async function uploadArchive(file: File): Promise<{ file_url: string; name: string }> {
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('is_private', '1');
+    const res = await fetch('/api/method/upload_file', {
+        method: 'POST',
+        body: fd,
+        credentials: 'include',
+        headers: { 'X-Frappe-CSRF-Token': (window as any).csrf_token || '' },
+    });
+    const data = await res.json();
+    if (!res.ok || (data && data.exc)) {
+        throw new Error(data?._server_messages || data?.exception || 'Upload failed');
+    }
+    return data.message;
+}
+
+const doImport = async () => {
+    if (!importFile.value) return;
+    importing.value = true;
+    try {
+        const uploaded = await uploadArchive(importFile.value);
+        const res = await createResource({ method: 'POST', url: 'builder.api.import_site' }).submit({
+            archive: uploaded.file_url,
+            mode: importMode.value,
+            run_async: 1,
+        });
+        const jobId = (res as any)?.job_id;
+        if (jobId) {
+            toast.success('Import started');
+            showImportDialog.value = false;
+            importFile.value = null;
+            // poll job status
+            pollImportJob(jobId);
+        } else {
+            // synchronous fallback
+            toast.success('Import completed');
+            showImportDialog.value = false;
+            importFile.value = null;
+            fetchPages();
+        }
+    } finally {
+        importing.value = false;
+    }
+};
+
+async function pollImportJob(jobId: string) {
+    let attempts = 0;
+    const maxAttempts = 300; // ~10 minutes @ 2s
+    const tick = async () => {
+        attempts += 1;
+        try {
+            const r = await createResource({ method: 'POST', url: 'builder.api.get_import_job_status' }).submit({ job_id: jobId });
+            const status = (r as any)?.status || 'unknown';
+            if (status === 'finished') {
+                toast.success('Import completed, reloading…');
+                // reload to ensure all caches/stores/UI reflect imported changes
+                setTimeout(() => window.location.reload(), 600);
+                return;
+            }
+            if (status === 'failed' || status === 'stopped') {
+                toast.error(`Import ${status}`);
+                return;
+            }
+        } catch (e) {
+            // swallow and continue polling a few times in case of transient errors
+        }
+        if (attempts < maxAttempts) {
+            setTimeout(tick, 2000);
+        } else {
+            toast.warning('Import status unknown, please check later');
+        }
+    };
+    tick();
+}
 </script>

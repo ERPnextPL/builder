@@ -142,9 +142,11 @@
 				</Tooltip>
 			</router-link>
 			<PublishButton></PublishButton>
+
+
 		</div>
 	</div>
-</template>
+	</template>
 <script setup lang="ts">
 import Dialog from "@/components/Controls/Dialog.vue";
 import AuthenticatedUserIcon from "@/components/Icons/AuthenticatedUser.vue";
@@ -247,6 +249,7 @@ const saveAsTemplate = async () => {
 		},
 	);
 };
+
 </script>
 <style>
 [data-radix-popper-content-wrapper] {
