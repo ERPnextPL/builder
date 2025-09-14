@@ -67,10 +67,21 @@ def setup_duckdb_table(table_name=DUCKDB_TABLE):
 
 def ingest_web_page_views_to_duckdb(table_name=DUCKDB_TABLE):
 	with DuckDBConnection() as db:
-		table_exists = db.execute(
-			f"SELECT COUNT(*) FROM information_schema.tables WHERE table_name = '{table_name}'"
-		).fetchone()
-		if table_exists and table_exists[0] == 0:
+		# Ensure table exists with correct schema (creation TIMESTAMP, is_unique INTEGER)
+		try:
+			info = db.execute(f"PRAGMA table_info('{table_name}')").fetchall()
+		except Exception:
+			info = []
+
+		if not info:
+			setup_duckdb_table(table_name)
+			return
+
+		schema = {str(r[1]).lower(): str(r[2]).upper() for r in info}
+		creation_ok = schema.get("creation") in ("TIMESTAMP", "TIMESTAMP_TZ")
+		is_unique_ok = schema.get("is_unique") in ("INTEGER", "BIGINT", "TINYINT", "SMALLINT")
+		# If schema mismatches, rebuild from source-of-truth
+		if not (creation_ok and is_unique_ok):
 			setup_duckdb_table(table_name)
 			return
 
