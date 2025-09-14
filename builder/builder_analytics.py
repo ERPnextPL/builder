@@ -132,9 +132,18 @@ def ingest_web_page_views_to_duckdb(table_name=DUCKDB_TABLE):
 				for r in records
 			]
 
-			db.executemany(
-				f"INSERT INTO {table_name} (creation, is_unique, path, referrer, time_zone, user_agent) VALUES (?, ?, ?, ?, ?, ?)",
+			# Insert via Pandas DataFrame to avoid parameter casting issues
+			df_batch = pd.DataFrame(
 				prepared,
+				columns=["creation", "is_unique", "path", "referrer", "time_zone", "user_agent"],
+			)
+			# Ensure correct dtypes
+			df_batch["is_unique"] = df_batch["is_unique"].astype("int32")
+			df_batch["creation"] = pd.to_datetime(df_batch["creation"], errors="coerce")
+			# Register and insert
+			db.register("batch", df_batch)
+			db.execute(
+				f"INSERT INTO {table_name} SELECT creation, is_unique, path, referrer, time_zone, user_agent FROM batch"
 			)
 
 			processed += len(records)
