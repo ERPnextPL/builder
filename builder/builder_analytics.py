@@ -66,7 +66,7 @@ def setup_duckdb_table(table_name=DUCKDB_TABLE):
 
 
 def ingest_web_page_views_to_duckdb(table_name=DUCKDB_TABLE):
-    with DuckDBConnection() as db:
+	with DuckDBConnection() as db:
 		table_exists = db.execute(
 			f"SELECT COUNT(*) FROM information_schema.tables WHERE table_name = '{table_name}'"
 		).fetchone()
@@ -88,54 +88,54 @@ def ingest_web_page_views_to_duckdb(table_name=DUCKDB_TABLE):
 
 		db.begin()
 
-        while True:
+		while True:
 			result = db.execute(f"SELECT MAX(creation) FROM {table_name}").fetchone()
 			last_record = result[0] if result and result[0] else None
 
 			filters = {"creation": [">", last_record]} if last_record else {}
-            records = frappe.get_all(
-                "Web Page View",
-                filters=filters,
-                fields=["creation", "is_unique", "path", "referrer", "time_zone", "user_agent"],
-                as_list=True,
-                limit=page_size,
-                order_by="creation asc",
-            )
+			records = frappe.get_all(
+				"Web Page View",
+				filters=filters,
+				fields=["creation", "is_unique", "path", "referrer", "time_zone", "user_agent"],
+				as_list=True,
+				limit=page_size,
+				order_by="creation asc",
+			)
 
-            if not records:
-                break
+			if not records:
+				break
 
-            # Normalize is_unique to integers (0/1) to avoid CAST issues
-            def _normalize_is_unique(val):
-                if val is None:
-                    return 0
-                # Handle booleans, ints, and strings like '0'/'1' or ''
-                if isinstance(val, bool):
-                    return 1 if val else 0
-                try:
-                    sval = str(val).strip()
-                    if sval == "":
-                        return 0
-                    return 1 if int(sval) != 0 else 0
-                except Exception:
-                    return 0
+			# Normalize is_unique to integers (0/1) to avoid CAST issues
+			def _normalize_is_unique(val):
+				if val is None:
+					return 0
+				# Handle booleans, ints, and strings like '0'/'1' or ''
+				if isinstance(val, bool):
+					return 1 if val else 0
+				try:
+					sval = str(val).strip()
+					if sval == "":
+						return 0
+					return 1 if int(sval) != 0 else 0
+				except Exception:
+					return 0
 
-            prepared = [
-                (
-                    r[0],
-                    _normalize_is_unique(r[1]),
-                    r[2],
-                    r[3],
-                    r[4],
-                    r[5],
-                )
-                for r in records
-            ]
+			prepared = [
+				(
+					r[0],
+					_normalize_is_unique(r[1]),
+					r[2],
+					r[3],
+					r[4],
+					r[5],
+				)
+				for r in records
+			]
 
-            db.executemany(
-                f"INSERT INTO {table_name} (creation, is_unique, path, referrer, time_zone, user_agent) VALUES (?, ?, ?, ?, ?, ?)",
-                prepared,
-            )
+			db.executemany(
+				f"INSERT INTO {table_name} (creation, is_unique, path, referrer, time_zone, user_agent) VALUES (?, ?, ?, ?, ?, ?)",
+				prepared,
+			)
 
 			processed += len(records)
 			progress = (processed / total_count) * 100 if total_count > 0 else 100
